@@ -1,0 +1,1 @@
+Selecione o intervalo de datas e inicie, ele agendará aleatoriamente storys no meli
