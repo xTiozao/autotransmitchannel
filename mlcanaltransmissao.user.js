@@ -1,11 +1,12 @@
 // ==UserScript==
 // @name         ML Canal de Transmissão - Agendador Automático de Stories
 // @namespace    https://github.com/xTiozao
-// @version      1.8
+// @version      1.9
 // @description  Agenda stories automaticamente em um RANGE de datas configurável e horários definidos no Canal de Transmissão do Mercado Livre
 // @match        https://www.mercadolivre.com.br/marketing/canal-de-transmissao*
 // @run-at       document-idle
 // @grant        GM_xmlhttpRequest
+// @grant        unsafeWindow
 // @updateURL    https://raw.githubusercontent.com/xTiozao/autotransmitchannel/main/mlcanaltransmissao.user.js
 // @downloadURL  https://raw.githubusercontent.com/xTiozao/autotransmitchannel/main/mlcanaltransmissao.user.js
 // ==/UserScript==
@@ -47,6 +48,9 @@
    *  UTILITÁRIOS
    * ========================================================================= */
   const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+  // Janela "real" da página. Em Tampermonkey/Greasemonkey o `window` do sandbox
+  // às vezes não é aceito como 'view' de um MouseEvent; usamos unsafeWindow quando existir.
+  const WIN = (typeof unsafeWindow !== 'undefined' && unsafeWindow) ? unsafeWindow : window;
   const rnd   = (a, b) => Math.floor(Math.random() * (b - a + 1)) + a;
   const human = () => sleep(rnd(CFG.HUMAN_MIN, CFG.HUMAN_MAX));
 
@@ -93,14 +97,19 @@
     const r = el.getBoundingClientRect();
     const x = r.left + r.width / 2 + rnd(-4, 4);
     const y = r.top + r.height / 2 + rnd(-3, 3);
-    const opt = { bubbles: true, cancelable: true, view: window, clientX: x, clientY: y };
-    el.dispatchEvent(new MouseEvent('mouseover', opt));
-    el.dispatchEvent(new MouseEvent('mousemove', opt));
+    const base = { bubbles: true, cancelable: true, clientX: x, clientY: y };
+    // Cria um MouseEvent tentando incluir a 'view'; se o ambiente rejeitar, cria sem ela.
+    const mkEvent = (type) => {
+      try { return new MouseEvent(type, { ...base, view: WIN }); }
+      catch { return new MouseEvent(type, base); }
+    };
+    el.dispatchEvent(mkEvent('mouseover'));
+    el.dispatchEvent(mkEvent('mousemove'));
     await sleep(rnd(60, 180));
-    el.dispatchEvent(new MouseEvent('mousedown', opt));
+    el.dispatchEvent(mkEvent('mousedown'));
     await sleep(rnd(40, 120));
-    el.dispatchEvent(new MouseEvent('mouseup', opt));
-    el.dispatchEvent(new MouseEvent('click', opt));
+    el.dispatchEvent(mkEvent('mouseup'));
+    el.dispatchEvent(mkEvent('click'));
     await human();
   }
 
@@ -571,7 +580,6 @@
    *  PAINEL DE CONTROLE
    * ========================================================================= */
   let panel, logBox;
-  let panelCollapsed = true; // começa minimizado (só a barra azul aparece)
   function renderPanel() {
     if (panel) panel.remove();
     panel = document.createElement('div');
@@ -583,23 +591,8 @@
     const r = getRange();
     const blkCount = getJSON(LS.blocked, []).length;
 
-    // Cabeçalho azul: clicável para minimizar/maximizar. Sempre visível.
     const header = `
-      <div id="ag-header" title="Clique para ${panelCollapsed?'abrir':'minimizar'} o menu"
-        style="background:#3483fa;color:#fff;padding:10px 12px;font-weight:bold;cursor:pointer;
-        display:flex;align-items:center;justify-content:space-between;user-select:none">
-        <span>🤖 Agendador de Stories</span>
-        <span style="font-size:15px;line-height:1">${panelCollapsed?'▸':'▾'}</span>
-      </div>`;
-
-    if (panelCollapsed) {
-      // Minimizado: apenas a barra azul.
-      logBox = null;
-      panel.innerHTML = header;
-      document.body.appendChild(panel);
-      panel.querySelector('#ag-header').onclick = () => { panelCollapsed = false; renderPanel(); };
-      return;
-    }
+      <div style="background:#3483fa;color:#fff;padding:10px 12px;font-weight:bold">🤖 Agendador de Stories</div>`;
 
     panel.innerHTML = header + `
       <div style="padding:12px">
@@ -657,9 +650,6 @@
       </div>`;
     document.body.appendChild(panel);
     logBox = panel.querySelector('#ag-log');
-
-    // Clique no cabeçalho azul minimiza o menu.
-    panel.querySelector('#ag-header').onclick = () => { panelCollapsed = true; renderPanel(); };
 
     const errBox = panel.querySelector('#ag-date-err');
     const showErr = (msg) => { if (errBox) errBox.textContent = msg || ''; };
@@ -735,9 +725,8 @@
     // ao sair do campo (blur), valida e já atualiza o range/matriz e o painel
     const onDateBlur = () => {
       if (getStr(LS.state) === 'running') return;
-      const cur = panelCollapsed; // preserva estado de minimizado
       const nr = applyRangeFromInputs();
-      if (nr) { panelCollapsed = cur; renderPanel(); }
+      if (nr) renderPanel();
     };
     if (startInp) startInp.addEventListener('blur', onDateBlur);
     if (endInp)   endInp.addEventListener('blur', onDateBlur);
